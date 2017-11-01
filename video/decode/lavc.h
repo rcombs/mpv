@@ -31,6 +31,7 @@ typedef struct lavc_ctx {
     AVFrame *pic;
     struct vd_lavc_hwdec *hwdec;
     AVRational codec_timebase;
+    enum AVPixelFormat pix_fmt;
     enum AVDiscard skip_frame;
     bool flushing;
     const char *decoder;
@@ -60,6 +61,11 @@ typedef struct lavc_ctx {
     // Set by generic hwaccels.
     struct mp_hwdec_ctx *hwdec_dev;
     bool owns_hwdec_dev;
+
+    int hwdec_fmt;
+    int hwdec_w;
+    int hwdec_h;
+    int hwdec_profile;
 
     bool hwdec_request_reinit;
     int hwdec_fail_count;
@@ -96,7 +102,7 @@ struct vd_lavc_hwdec {
     int (*probe)(struct lavc_ctx *ctx, struct vd_lavc_hwdec *hwdec,
                  const char *codec);
     int (*init)(struct lavc_ctx *ctx);
-    int (*init_decoder)(struct lavc_ctx *ctx);
+    int (*init_decoder)(struct lavc_ctx *ctx, int w, int h);
     void (*uninit)(struct lavc_ctx *ctx);
     // Process the image returned by the libavcodec decoder.
     struct mp_image *(*process_image)(struct lavc_ctx *ctx, struct mp_image *img);

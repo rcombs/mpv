@@ -61,6 +61,7 @@ static void init_avctx(struct dec_video *vd, const char *decoder,
 static void uninit_avctx(struct dec_video *vd);
 
 static int get_buffer2_direct(AVCodecContext *avctx, AVFrame *pic, int flags);
+static int get_buffer2_hwdec(AVCodecContext *avctx, AVFrame *pic, int flags);
 static enum AVPixelFormat get_format_hwdec(struct AVCodecContext *avctx,
                                            const enum AVPixelFormat *pix_fmt);
 
@@ -190,6 +191,13 @@ static const struct vd_lavc_hwdec mp_vd_lavc_vaapi = {
     .image_format = IMGFMT_VAAPI,
     .generic_hwaccel = true,
     .set_hwframes = true,
+    .static_pool = true,
+    .pixfmt_map = (const enum AVPixelFormat[][2]) {
+        {AV_PIX_FMT_YUV420P10, AV_PIX_FMT_P010},
+        {AV_PIX_FMT_YUV420P,   AV_PIX_FMT_NV12},
+        {AV_PIX_FMT_YUVJ420P,  AV_PIX_FMT_NV12},
+        {AV_PIX_FMT_NONE}
+    },
 };
 
 #include "video/vaapi.h"
@@ -200,7 +208,14 @@ static const struct vd_lavc_hwdec mp_vd_lavc_vaapi_copy = {
     .image_format = IMGFMT_VAAPI,
     .generic_hwaccel = true,
     .set_hwframes = true,
+    .static_pool = true,
     .create_dev = va_create_standalone,
+    .pixfmt_map = (const enum AVPixelFormat[][2]) {
+        {AV_PIX_FMT_YUV420P10, AV_PIX_FMT_P010},
+        {AV_PIX_FMT_YUV420P,   AV_PIX_FMT_NV12},
+        {AV_PIX_FMT_YUVJ420P,  AV_PIX_FMT_NV12},
+        {AV_PIX_FMT_NONE}
+    },
 };
 #endif
 
@@ -210,6 +225,11 @@ static const struct vd_lavc_hwdec mp_vd_lavc_vdpau = {
     .image_format = IMGFMT_VDPAU,
     .generic_hwaccel = true,
     .set_hwframes = true,
+    .pixfmt_map = (const enum AVPixelFormat[][2]) {
+        {AV_PIX_FMT_YUV420P,   AV_PIX_FMT_YUV420P},
+        {AV_PIX_FMT_YUVJ420P,  AV_PIX_FMT_YUV420P},
+        {AV_PIX_FMT_NONE}
+    },
 };
 
 #include "video/vdpau.h"
@@ -221,6 +241,11 @@ static const struct vd_lavc_hwdec mp_vd_lavc_vdpau_copy = {
     .generic_hwaccel = true,
     .set_hwframes = true,
     .create_dev = vdpau_create_standalone,
+    .pixfmt_map = (const enum AVPixelFormat[][2]) {
+        {AV_PIX_FMT_YUV420P,   AV_PIX_FMT_YUV420P},
+        {AV_PIX_FMT_YUVJ420P,  AV_PIX_FMT_YUV420P},
+        {AV_PIX_FMT_NONE}
+    },
 };
 #endif
 
@@ -395,7 +420,7 @@ static int hwdec_probe(struct dec_video *vd, struct vd_lavc_hwdec *hwdec,
         r = hwdec->probe(ctx, hwdec, codec);
     if (hwdec->generic_hwaccel) {
         assert(!hwdec->probe && !hwdec->init && !hwdec->init_decoder &&
-               !hwdec->uninit);
+               !hwdec->uninit && !hwdec->allocate_image);
         struct mp_hwdec_ctx *dev = hwdec_create_dev(vd, hwdec, autoprobe);
         if (!dev)
             return hwdec->copying ? -1 : HWDEC_ERR_NO_CTX;
@@ -606,6 +631,8 @@ static void init_avctx(struct dec_video *vd, const char *decoder,
 #endif
         if (ctx->hwdec->image_format)
             avctx->get_format = get_format_hwdec;
+        if (ctx->hwdec->allocate_image)
+            avctx->get_buffer2 = get_buffer2_hwdec;
         if (ctx->hwdec->init && ctx->hwdec->init(ctx) < 0)
             goto error;
         if (ctx->hwdec->generic_hwaccel) {
@@ -985,7 +1012,8 @@ static enum AVPixelFormat get_format_hwdec(struct AVCodecContext *avctx,
                 ctx->hwdec_h != avctx->coded_height ||
                 ctx->hwdec_fmt != ctx->hwdec->image_format ||
                 ctx->hwdec_profile != avctx->profile ||
-                ctx->hwdec_request_reinit;
+                ctx->hwdec_request_reinit ||
+                ctx->hwdec->volatile_context;
             ctx->hwdec_w = avctx->coded_width;
             ctx->hwdec_h = avctx->coded_height;
             ctx->hwdec_fmt = ctx->hwdec->image_format;
@@ -1098,6 +1126,45 @@ fallback:
     pthread_mutex_unlock(&p->dr_lock);
 
     return avcodec_default_get_buffer2(avctx, pic, flags);
+}
+
+static int get_buffer2_hwdec(AVCodecContext *avctx, AVFrame *pic, int flags)
+{
+    struct dec_video *vd = avctx->opaque;
+    vd_ffmpeg_ctx *ctx = vd->priv;
+
+    int imgfmt = pixfmt2imgfmt(pic->format);
+    if (!ctx->hwdec || ctx->hwdec_fmt != imgfmt)
+        ctx->hwdec_failed = true;
+
+    /* Hardware decoding failed, and we will trigger a proper fallback later
+     * when returning from the decode call. (We are forcing complete
+     * reinitialization later to reset the thread count properly.)
+     */
+    if (ctx->hwdec_failed)
+        return avcodec_default_get_buffer2(avctx, pic, flags);
+
+    // We expect it to use the exact size used to create the hw decoder in
+    // get_format_hwdec(). For cropped video, this is expected to be the
+    // uncropped size (usually coded_width/coded_height).
+    int w = pic->width;
+    int h = pic->height;
+
+    if (imgfmt != ctx->hwdec_fmt && w != ctx->hwdec_w && h != ctx->hwdec_h)
+        return AVERROR(EINVAL);
+
+    struct mp_image *mpi = ctx->hwdec->allocate_image(ctx, w, h);
+    if (!mpi)
+        return AVERROR(ENOMEM);
+
+    for (int i = 0; i < 4; i++) {
+        pic->data[i] = mpi->planes[i];
+        pic->buf[i] = mpi->bufs[i];
+        mpi->bufs[i] = NULL;
+    }
+    talloc_free(mpi);
+
+    return 0;
 }
 
 static bool prepare_decoding(struct dec_video *vd)

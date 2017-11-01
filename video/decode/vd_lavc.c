@@ -706,6 +706,7 @@ static void uninit_avctx(struct dec_video *vd)
     ctx->hw_probing = false;
 }
 
+#if HAVE_AVCODEC_HW_FRAMES_PARAMS
 static int init_generic_hwaccel(struct dec_video *vd, enum AVPixelFormat hw_fmt)
 {
     struct lavc_ctx *ctx = vd->priv;

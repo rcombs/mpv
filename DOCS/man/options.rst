@@ -10,6 +10,9 @@ Track Selection
     ISO 639-2 three-letter codes are treated the same. A tag with 2 matching
     components is a stronger match than a tag with only 1. See also ``--aid``.
 
+    The special value "auto" can be included anywhere in the list,
+    and is equivalent to the user's OS-level list of preferred languages.
+
     This is a string list option. See `List Options`_ for details.
 
     .. admonition:: Examples

@@ -1,5 +1,5 @@
 /*
- * Language code utility functions
+ * User language lookup for Apple platforms
  *
  * This file is part of mpv.
  *
@@ -17,12 +17,29 @@
  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef MP_LANGUAGE_H
-#define MP_LANGUAGE_H
+#include "misc/language.h"
 
-#define LANGUAGE_SCORE_MAX 2
-int mp_match_lang_single(const char *l1, const char *l2);
+#include "apple_utils.h"
+#include "mpv_talloc.h"
 
-char **mp_get_user_langs(void);
+char **mp_get_user_langs(void)
+{
+    CFArrayRef arr = CFLocaleCopyPreferredLanguages();
+    if (!arr)
+        return false;
+    CFIndex count = CFArrayGetCount(arr);
+    if (!count)
+        return NULL;
 
-#endif /* MP_LANGUAGE_H */
+    char **ret = talloc_array_ptrtype(NULL, ret, count + 1);
+
+    for (CFIndex i = 0; i < count; i++) {
+        CFStringRef cfstr = CFArrayGetValueAtIndex(arr, i);
+        ret[i] = talloc_steal(ret, cfstr_get_cstr(cfstr));
+    }
+
+    ret[count] = NULL;
+
+    CFRelease(arr);
+    return ret;
+}

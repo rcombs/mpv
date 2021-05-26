@@ -19,8 +19,11 @@
 
 #include "language.h"
 
+#include "osdep/strnlen.h"
+
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 struct lang {

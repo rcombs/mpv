@@ -317,6 +317,7 @@ def build(ctx):
         ( "misc/dispatch.c" ),
         ( "misc/jni.c",                          "android" ),
         ( "misc/json.c" ),
+        ( "misc/language.c" ),
         ( "misc/natural_sort.c" ),
         ( "misc/node.c" ),
         ( "misc/rendezvous.c" ),

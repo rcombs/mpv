@@ -79,7 +79,6 @@ struct mp_subtitle_opts {
     float sub_fps;
     float sub_speed;
     int forced_subs_only;
-    int forced_subs_only_current;
     int stretch_dvd_subs;
     int stretch_image_subs;
     int image_subs_video_res;

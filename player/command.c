@@ -1952,6 +1952,7 @@ static int get_track_entry(int item, int action, void *arg, void *ctx)
         {"albumart",    SUB_PROP_FLAG(track->attached_picture)},
         {"default",     SUB_PROP_FLAG(track->default_track)},
         {"forced",      SUB_PROP_FLAG(track->forced_track)},
+        {"auto-forced-only", SUB_PROP_FLAG(track->forced_only_def)},
         {"dependent",   SUB_PROP_FLAG(track->dependent_track)},
         {"visual-impaired",  SUB_PROP_FLAG(track->visual_impaired_track)},
         {"hearing-impaired", SUB_PROP_FLAG(track->hearing_impaired_track)},

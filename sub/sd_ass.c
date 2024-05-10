@@ -40,7 +40,7 @@
 
 struct sd_ass_priv {
     struct ass_library *ass_library;
-    struct ass_renderer *ass_renderer;
+    struct ass_renderer *ass_renderer, *ass_renderer_pre_scale;
     struct ass_track *ass_track;
     struct ass_track *shadow_track; // for --sub-ass=no rendering
     bool ass_configured;
@@ -49,8 +49,8 @@ struct sd_ass_priv {
     struct sd_filter **filters;
     int num_filters;
     bool clear_once;
-    struct mp_ass_packer *packer;
-    struct sub_bitmap_copy_cache *copy_cache;
+    struct mp_ass_packer *packer, *packer_pre_scale;
+    struct sub_bitmap_copy_cache *copy_cache, *copy_cache_pre_scale;
     bstr last_text;
     struct mp_image_params video_params;
     struct mp_image_params last_params;
@@ -202,10 +202,15 @@ static void enable_output(struct sd *sd, bool enable)
     if (ctx->ass_renderer) {
         ass_renderer_done(ctx->ass_renderer);
         ctx->ass_renderer = NULL;
+        ass_renderer_done(ctx->ass_renderer_pre_scale);
+        ctx->ass_renderer_pre_scale = NULL;
     } else {
         ctx->ass_renderer = ass_renderer_init(ctx->ass_library);
+        ctx->ass_renderer_pre_scale = ass_renderer_init(ctx->ass_library);
 
         mp_ass_configure_fonts(ctx->ass_renderer, sd->opts->sub_style,
+                               sd->global, sd->log);
+        mp_ass_configure_fonts(ctx->ass_renderer_pre_scale, sd->opts->sub_style,
                                sd->global, sd->log);
     }
 }
@@ -283,6 +288,7 @@ static int init(struct sd *sd)
     filters_init(sd);
 
     ctx->packer = mp_ass_packer_alloc(ctx);
+    ctx->packer_pre_scale = mp_ass_packer_alloc(ctx);
 
     return 0;
 }
@@ -463,9 +469,12 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
     struct mp_subtitle_shared_opts *shared_opts = sd->shared_opts;
     struct sd_ass_priv *ctx = sd->priv;
     ASS_Renderer *priv = ctx->ass_renderer;
+    ASS_Renderer *priv2 = ctx->ass_renderer_pre_scale;
 
     ass_set_frame_size(priv, dim->w, dim->h);
+    ass_set_frame_size(priv2, dim->w, dim->h);
     ass_set_margins(priv, dim->mt, dim->mb, dim->ml, dim->mr);
+    ass_set_margins(priv2, dim->mt, dim->mb, dim->ml, dim->mr);
 
     bool set_use_margins = false;
     float set_sub_pos = 0.0f;
@@ -501,8 +510,11 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
             set_font_scale /= factor;
     }
     ass_set_use_margins(priv, set_use_margins);
+    ass_set_use_margins(priv2, set_use_margins);
     ass_set_line_position(priv, set_sub_pos);
+    ass_set_line_position(priv2, set_sub_pos);
     ass_set_shaper(priv, opts->ass_shaper);
+    ass_set_shaper(priv2, opts->ass_shaper);
     int set_force_flags = 0;
     if (total_override)
         set_force_flags |= ASS_OVERRIDE_BIT_STYLE | ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
@@ -515,17 +527,22 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
         set_force_flags |= ASS_OVERRIDE_BIT_JUSTIFY;
 #endif
     ass_set_selective_style_override_enabled(priv, set_force_flags);
+    ass_set_selective_style_override_enabled(priv2, set_force_flags);
     ASS_Style style = {0};
     mp_ass_set_style(&style, MP_ASS_FONT_PLAYRESY, opts->sub_style);
     ass_set_selective_style_override(priv, &style);
+    ass_set_selective_style_override(priv2, &style);
     free(style.FontName);
     if (converted && track->default_style < track->n_styles) {
         mp_ass_set_style(track->styles + track->default_style,
                          track->PlayResY, opts->sub_style);
     }
     ass_set_font_scale(priv, set_font_scale);
+    ass_set_font_scale(priv2, set_font_scale);
     ass_set_hinting(priv, set_hinting);
+    ass_set_hinting(priv2, set_hinting);
     ass_set_line_spacing(priv, set_line_spacing);
+    ass_set_line_spacing(priv2, set_line_spacing);
 #if LIBASS_VERSION >= 0x01600010
     if (converted) {
         ass_track_set_feature(track, ASS_FEATURE_WRAP_UNICODE, 1);
@@ -645,7 +662,7 @@ static long long find_timestamp(struct sd *sd, double pts)
 #undef END
 
 static struct sub_bitmaps *get_bitmaps(struct sd *sd, struct mp_osd_res dim,
-                                       int format, double pts)
+                                       int format, double pts, int flags)
 {
     struct sd_ass_priv *ctx = sd->priv;
     struct mp_subtitle_opts *opts = sd->opts;
@@ -653,7 +670,8 @@ static struct sub_bitmaps *get_bitmaps(struct sd *sd, struct mp_osd_res dim,
     bool no_ass = !opts->ass_enabled || shared_opts->ass_style_override[sd->order] == 5;
     bool converted = (ctx->is_converted && !lavc_conv_is_styled(ctx->converter)) || no_ass;
     ASS_Track *track = no_ass ? ctx->shadow_track : ctx->ass_track;
-    ASS_Renderer *renderer = ctx->ass_renderer;
+    bool pre_scale = !!(flags & OSD_DRAW_PRE_SCALE);
+    ASS_Renderer *renderer = pre_scale ? ctx->ass_renderer_pre_scale : ctx->ass_renderer;
     struct sub_bitmaps *res = &(struct sub_bitmaps){0};
 
     // Always update the osd_res
@@ -668,6 +686,15 @@ static struct sub_bitmaps *get_bitmaps(struct sd *sd, struct mp_osd_res dim,
     // If we ever see a format that makes this distinction, we can add support here.
     if (opts->sub_forced_events_only)
         goto done;
+
+#if 1
+    ASS_EventType types = ASS_EVENT_TYPE_ALL;
+    if (flags & OSD_DRAW_SPLIT_SIGNS) {
+        types = (flags & OSD_DRAW_PRE_SCALE) ? ASS_EVENT_TYPE_SIGNS : ASS_EVENT_TYPE_DIALOGUE;
+    }
+    ass_set_event_types(renderer, types);
+#endif
+
 
     double scale = dim.display_par;
     if (!converted && (!shared_opts->ass_style_override[sd->order] ||
@@ -697,11 +724,12 @@ static struct sub_bitmaps *get_bitmaps(struct sd *sd, struct mp_osd_res dim,
 
     int changed;
     ASS_Image *imgs = ass_render_frame(renderer, track, ts, &changed);
-    mp_ass_packer_pack(ctx->packer, &imgs, 1, changed, !converted, format, res);
+
+    mp_ass_packer_pack(pre_scale ? ctx->packer_pre_scale : ctx->packer, &imgs, 1, changed, !converted, format, res);
 
 done:
     // mangle_colors() modifies the color field, so copy the thing _before_.
-    res = sub_bitmaps_copy(&ctx->copy_cache, res);
+    res = sub_bitmaps_copy(pre_scale ? &ctx->copy_cache_pre_scale : &ctx->copy_cache, res);
 
     if (!converted && res)
         mangle_colors(sd, res);
@@ -932,6 +960,7 @@ static void uninit(struct sd *sd)
         lavc_conv_uninit(ctx->converter);
     assobjects_destroy(sd);
     talloc_free(ctx->copy_cache);
+    talloc_free(ctx->copy_cache_pre_scale);
 }
 
 static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)

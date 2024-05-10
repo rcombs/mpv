@@ -455,7 +455,8 @@ const struct m_sub_options gl_video_conf = {
         {"blend-subtitles", OPT_CHOICE(blend_subs,
             {"no", BLEND_SUBS_NO},
             {"yes", BLEND_SUBS_YES},
-            {"video", BLEND_SUBS_VIDEO})},
+            {"video", BLEND_SUBS_VIDEO},
+            {"split", BLEND_SUBS_SPLIT})},
         {"glsl-shaders", OPT_PATHLIST(user_shaders), .flags = M_OPT_FILE},
         {"glsl-shader", OPT_CLI_ALIAS("glsl-shaders-append")},
         {"glsl-shader-opts", OPT_KEYVALUELIST(user_shader_opts)},
@@ -3026,7 +3027,10 @@ static bool pass_render_frame(struct gl_video *p, struct mp_image *mpi,
     if (vpts == MP_NOPTS_VALUE)
         vpts = p->osd_pts;
 
-    if (p->osd && p->opts.blend_subs == BLEND_SUBS_VIDEO &&
+    bool split_subs = (p->opts.blend_subs == BLEND_SUBS_SPLIT);
+    int draw_flags = OSD_DRAW_SUB_ONLY | (split_subs ? OSD_DRAW_SPLIT_SIGNS : 0);
+
+    if (p->osd && (split_subs || p->opts.blend_subs == BLEND_SUBS_VIDEO) &&
         (flags & RENDER_FRAME_SUBS))
     {
         double scale[2];
@@ -3037,7 +3041,7 @@ static bool pass_render_frame(struct gl_video *p, struct mp_image *mpi,
         };
         finish_pass_tex(p, &p->blend_subs_tex, rect.w, rect.h);
         struct ra_fbo fbo = { p->blend_subs_tex };
-        pass_draw_osd(p, OSD_DRAW_SUB_ONLY, flags, vpts, rect, &fbo, false);
+        pass_draw_osd(p, draw_flags | OSD_DRAW_PRE_SCALE, flags, vpts, rect, &fbo, false);
         pass_read_tex(p, p->blend_subs_tex);
         pass_describe(p, "blend subs video");
     }
@@ -3047,7 +3051,7 @@ static bool pass_render_frame(struct gl_video *p, struct mp_image *mpi,
 
     int vp_w = p->dst_rect.x1 - p->dst_rect.x0,
         vp_h = p->dst_rect.y1 - p->dst_rect.y0;
-    if (p->osd && p->opts.blend_subs == BLEND_SUBS_YES &&
+    if (p->osd && (split_subs || p->opts.blend_subs == BLEND_SUBS_YES) &&
         (flags & RENDER_FRAME_SUBS))
     {
         // Recreate the real video size from the src/dst rects
@@ -3069,7 +3073,7 @@ static bool pass_render_frame(struct gl_video *p, struct mp_image *mpi,
         }
         finish_pass_tex(p, &p->blend_subs_tex, p->texture_w, p->texture_h);
         struct ra_fbo fbo = { p->blend_subs_tex };
-        pass_draw_osd(p, OSD_DRAW_SUB_ONLY, flags, vpts, rect, &fbo, false);
+        pass_draw_osd(p, draw_flags, flags, vpts, rect, &fbo, false);
         pass_read_tex(p, p->blend_subs_tex);
         pass_describe(p, "blend subs");
     }

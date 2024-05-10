@@ -82,6 +82,7 @@ enum blend_subs_mode {
     BLEND_SUBS_NO = 0,
     BLEND_SUBS_YES,
     BLEND_SUBS_VIDEO,
+    BLEND_SUBS_SPLIT,
 };
 
 enum tone_mapping {

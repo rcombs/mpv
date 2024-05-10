@@ -106,7 +106,7 @@ struct mp_osd_res {
 bool osd_res_equals(struct mp_osd_res a, struct mp_osd_res b);
 
 // 0 <= sub_bitmaps.render_index < MAX_OSD_PARTS
-#define MAX_OSD_PARTS 5
+#define MAX_OSD_PARTS 10
 
 // Start of OSD symbols in osd_font.pfb
 #define OSD_CODEPOINTS 0xE000
@@ -198,6 +198,8 @@ enum mp_osd_draw_flags {
     OSD_DRAW_SUB_FILTER = (1 << 0),
     OSD_DRAW_SUB_ONLY   = (1 << 1),
     OSD_DRAW_OSD_ONLY   = (1 << 2),
+    OSD_DRAW_PRE_SCALE  = (1 << 3),
+    OSD_DRAW_SPLIT_SIGNS = (1 << 4),
 };
 
 void osd_draw(struct osd_state *osd, struct mp_osd_res res,
